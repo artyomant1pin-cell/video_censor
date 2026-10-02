@@ -30,7 +30,7 @@ source .venv/bin/activate.fish
 python -m pip install -r requirements.txt
 ```
 
-Start the application with `fish run.fish`. During analysis, recognized words are added to the results list as they arrive with exact start/end timecodes. Paste a YouTube link and press **Скачать превью** to save the thumbnail and show the video title. The app downloads thumbnail/metadata only, not the video. Completed renders are stored in `~/.local/share/cut-helper/history.json` and shown in the in-app history panel.
+Start the application with `fish run.fish`. During analysis, recognized words are added to the results list as they arrive with exact start/end timecodes. Paste a YouTube link and press **Скачать превью** to save the thumbnail and show the video title. Use **Скачать видео** for a public YouTube/Twitch recording or live stream. Active streams continue downloading until they end or you press **Остановить**; partial data is retained for resuming. Completed renders are stored in `~/.local/share/cut-helper/history.json` and shown in the in-app history panel.
 
 For NVIDIA speech recognition, install the CUDA 12 libraries expected by CTranslate2, then launch through `run.fish` so their library paths are set:
 

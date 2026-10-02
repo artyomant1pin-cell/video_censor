@@ -51,6 +51,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.hit_checks: list[ctk.CTkCheckBox] = []
         self.external_lists: list[Path] = []
         self.history: list[dict] = self._load_history()
+        self._stream_stop = threading.Event()
         self.events: queue.Queue = queue.Queue()
         self._build()
         try:
@@ -64,11 +65,21 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _build(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(self, text="Cut-Helper", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=0, padx=22, pady=(18, 12), sticky="w")
 
-        source = ctk.CTkFrame(self, fg_color="transparent")
-        source.grid(row=1, column=0, padx=18, pady=4, sticky="ew")
+        self.tabs = ctk.CTkTabview(self)
+        self.tabs.grid(row=1, column=0, padx=16, pady=4, sticky="nsew")
+        censor_tab = self.tabs.add("Цензура")
+        online_tab = self.tabs.add("YouTube и Twitch")
+        history_tab = self.tabs.add("История")
+        for tab in (censor_tab, online_tab, history_tab):
+            tab.grid_columnconfigure(0, weight=1)
+        censor_tab.grid_rowconfigure(3, weight=1)
+        history_tab.grid_rowconfigure(0, weight=1)
+
+        source = ctk.CTkFrame(censor_tab, fg_color="transparent")
+        source.grid(row=0, column=0, padx=4, pady=4, sticky="ew")
         source.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(source, text="Видео").grid(row=0, column=0, padx=(4, 10))
         ctk.CTkEntry(source, textvariable=self.video).grid(row=0, column=1, sticky="ew")
@@ -79,20 +90,8 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.drop_hint = ctk.CTkLabel(source, text="Подключение drag-and-drop…", text_color=("gray45", "gray65"), anchor="w")
         self.drop_hint.grid(row=2, column=1, sticky="w", pady=(4, 0))
 
-        youtube = ctk.CTkFrame(self)
-        youtube.grid(row=2, column=0, padx=18, pady=(4, 4), sticky="ew")
-        youtube.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(youtube, text="YouTube").grid(row=0, column=0, padx=(12, 8), pady=9)
-        ctk.CTkEntry(youtube, textvariable=self.youtube_url, placeholder_text="Вставьте ссылку на ролик").grid(row=0, column=1, padx=4, sticky="ew")
-        self.youtube_button = ctk.CTkButton(youtube, text="Скачать превью", width=140, command=self._download_youtube_thumbnail)
-        self.youtube_button.grid(row=0, column=2, padx=(8, 12))
-        self.youtube_result_label = ctk.CTkLabel(youtube, textvariable=self.youtube_result, anchor="w", justify="left")
-        self.youtube_result_label.grid(row=1, column=1, padx=4, pady=(0, 8), sticky="ew")
-        self.open_thumbnail_button = ctk.CTkButton(youtube, text="Открыть", width=90, state="disabled")
-        self.open_thumbnail_button.grid(row=1, column=2, padx=(8, 12), pady=(0, 8))
-
-        settings = ctk.CTkFrame(self)
-        settings.grid(row=3, column=0, padx=18, pady=10, sticky="ew")
+        settings = ctk.CTkFrame(censor_tab)
+        settings.grid(row=1, column=0, padx=4, pady=10, sticky="ew")
         settings.grid_columnconfigure(3, weight=1)
         ctk.CTkLabel(settings, text="Режим").grid(row=0, column=0, padx=(12, 6), pady=12)
         ctk.CTkOptionMenu(settings, values=MODES, variable=self.mode, width=150, command=self._mode_changed).grid(row=0, column=1, padx=6, pady=12)
@@ -109,8 +108,8 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.sound_button.grid(row=2, column=3, padx=6, pady=(0, 12), sticky="w")
         self._mode_changed(self.mode.get())
 
-        toolbar = ctk.CTkFrame(self, fg_color="transparent")
-        toolbar.grid(row=4, column=0, padx=18, pady=(0, 7), sticky="ew")
+        toolbar = ctk.CTkFrame(censor_tab, fg_color="transparent")
+        toolbar.grid(row=2, column=0, padx=4, pady=(0, 7), sticky="ew")
         self.analyze_button = ctk.CTkButton(toolbar, text="Анализировать видео", command=self._analyze)
         self.analyze_button.pack(side="left")
         self.render_button = ctk.CTkButton(toolbar, text="Рендер", command=self._render, state="disabled")
@@ -118,17 +117,40 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkButton(toolbar, text="Загрузить blacklist…", width=158, command=self._load_blacklist).pack(side="right")
         ctk.CTkButton(toolbar, text="+ Слово", width=90, command=self._add_word).pack(side="right", padx=8)
 
-        self.results = ctk.CTkScrollableFrame(self, label_text="Найденные слова · снимите отметку с ложных срабатываний")
-        self.results.grid(row=5, column=0, padx=18, pady=4, sticky="nsew")
+        self.results = ctk.CTkScrollableFrame(censor_tab, label_text="Найденные слова · снимите отметку с ложных срабатываний")
+        self.results.grid(row=3, column=0, padx=4, pady=4, sticky="nsew")
         self.results.grid_columnconfigure(0, weight=1)
-        self.history_frame = ctk.CTkScrollableFrame(self, label_text="История цензурирования")
-        self.history_frame.grid(row=6, column=0, padx=18, pady=(4, 2), sticky="ew")
-        self.history_frame.configure(height=105)
+
+        youtube = ctk.CTkFrame(online_tab)
+        youtube.grid(row=0, column=0, padx=10, pady=10, sticky="new")
+        youtube.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(youtube, text="YouTube").grid(row=0, column=0, padx=(12, 8), pady=9)
+        ctk.CTkEntry(youtube, textvariable=self.youtube_url, placeholder_text="Вставьте ссылку на ролик").grid(row=0, column=1, padx=4, sticky="ew")
+        self.youtube_button = ctk.CTkButton(youtube, text="Скачать превью", width=140, command=self._download_youtube_thumbnail)
+        self.youtube_button.grid(row=0, column=2, padx=(8, 12))
+        self.youtube_result_label = ctk.CTkLabel(youtube, textvariable=self.youtube_result, anchor="w", justify="left")
+        self.youtube_result_label.grid(row=1, column=1, padx=4, pady=(0, 8), sticky="ew")
+        self.open_thumbnail_button = ctk.CTkButton(youtube, text="Открыть", width=90, state="disabled")
+        self.open_thumbnail_button.grid(row=1, column=2, padx=(8, 12), pady=(0, 8))
+        ctk.CTkLabel(youtube, text="Стрим / запись").grid(row=2, column=0, padx=(12, 8), pady=(2, 8))
+        ctk.CTkEntry(youtube, textvariable=self.youtube_url, placeholder_text="Ссылка YouTube или Twitch").grid(row=2, column=1, padx=4, pady=(2, 8), sticky="ew")
+        self.stream_button = ctk.CTkButton(youtube, text="Скачать видео", width=140, command=self._download_stream)
+        self.stream_button.grid(row=2, column=2, padx=(8, 12), pady=(2, 8))
+        self.stop_stream_button = ctk.CTkButton(youtube, text="Остановить", width=90, state="disabled", command=self._stop_stream)
+        self.stop_stream_button.grid(row=3, column=2, padx=(8, 12), pady=(0, 8))
+        self.stream_progress = ctk.CTkProgressBar(youtube)
+        self.stream_progress.grid(row=3, column=1, padx=4, pady=(0, 8), sticky="ew")
+        self.stream_progress.set(0)
+        self.stream_status = ctk.CTkLabel(youtube, text="", anchor="w")
+        self.stream_status.grid(row=4, column=1, padx=4, pady=(0, 8), sticky="ew")
+
+        self.history_frame = ctk.CTkScrollableFrame(history_tab, label_text="Зацензуренные видео")
+        self.history_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self._show_history()
         self.progress = ctk.CTkProgressBar(self)
-        self.progress.grid(row=7, column=0, padx=22, pady=(10, 3), sticky="ew")
+        self.progress.grid(row=2, column=0, padx=22, pady=(10, 3), sticky="ew")
         self.progress.set(0)
-        ctk.CTkLabel(self, textvariable=self.status, anchor="w").grid(row=8, column=0, padx=22, pady=(2, 12), sticky="ew")
+        ctk.CTkLabel(self, textvariable=self.status, anchor="w").grid(row=3, column=0, padx=22, pady=(2, 12), sticky="ew")
 
     def _choose_video(self):
         name = filedialog.askopenfilename(title="Выберите видео", filetypes=[("Видео", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Все файлы", "*.*")])
@@ -205,6 +227,77 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 self.events.put(("youtube_error", str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _download_stream(self):
+        url = self.youtube_url.get().strip()
+        host = (urlparse(url).hostname or "").casefold()
+        youtube_hosts = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+        twitch_hosts = {"twitch.tv", "www.twitch.tv", "m.twitch.tv", "clips.twitch.tv"}
+        if urlparse(url).scheme not in ("http", "https") or host not in youtube_hosts | twitch_hosts:
+            messagebox.showerror("Неверная ссылка", "Вставьте ссылку на публичный стрим или запись YouTube/Twitch.")
+            return
+        output_dir = Path(self.output_dir.get()).expanduser()
+        if not output_dir.is_dir():
+            messagebox.showerror("Папка не найдена", "Выберите существующую папку результата.")
+            return
+        self._stream_stop.clear()
+        self.stream_button.configure(state="disabled")
+        self.stop_stream_button.configure(state="normal")
+        self.stream_progress.set(0)
+        self.stream_status.configure(text="Подключение к потоку…")
+
+        def worker():
+            try:
+                from yt_dlp import YoutubeDL
+                from yt_dlp.utils import DownloadError
+                template = str(output_dir / "%(title).150B [%(id)s].%(ext)s")
+
+                def report(data):
+                    if self._stream_stop.is_set():
+                        raise DownloadError("Остановлено пользователем")
+                    state = data.get("status")
+                    if state == "downloading":
+                        downloaded = data.get("downloaded_bytes", 0)
+                        total = data.get("total_bytes") or data.get("total_bytes_estimate")
+                        speed = data.get("speed")
+                        eta = data.get("eta")
+                        percent = downloaded / total if total else None
+                        self.events.put(("stream_progress", (percent, speed, eta, downloaded)))
+                    elif state == "finished":
+                        self.events.put(("stream_status", "Загрузка получена; объединяю аудио и видео…"))
+
+                options = {
+                    "format": "bestvideo*+bestaudio/best",
+                    "outtmpl": template,
+                    "merge_output_format": "mp4",
+                    "noplaylist": True,
+                    "live_from_start": True,
+                    "continuedl": True,
+                    "progress_hooks": [report],
+                    "quiet": True,
+                    "no_warnings": True,
+                }
+                with YoutubeDL(options) as downloader:
+                    info = downloader.extract_info(url, download=True)
+                video_id = str(info.get("id", ""))
+                files = [item for item in output_dir.iterdir()
+                         if item.is_file() and f"[{video_id}]" in item.stem
+                         and not item.name.endswith((".part", ".ytdl"))]
+                if not files:
+                    raise RuntimeError("Загрузка завершилась, но итоговый видеофайл не найден.")
+                result = max(files, key=lambda item: item.stat().st_mtime)
+                self.events.put(("stream_done", (info.get("title", "Стрим"), str(result))))
+            except Exception as exc:
+                if self._stream_stop.is_set():
+                    self.events.put(("stream_stopped", str(exc)))
+                else:
+                    self.events.put(("stream_error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _stop_stream(self):
+        self._stream_stop.set()
+        self.stream_status.configure(text="Останавливаю загрузку; временный файл сохранится для продолжения…")
 
     def _mode_changed(self, _value=None):
         enabled = self.mode.get() == "Custom Sound"
@@ -419,6 +512,36 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     self.youtube_result.set("")
                     self.youtube_button.configure(state="normal")
                     messagebox.showerror("Ошибка YouTube", payload)
+                elif event == "stream_progress":
+                    percent, speed, eta, downloaded = payload
+                    if percent is not None:
+                        self.stream_progress.set(min(1.0, max(0.0, percent)))
+                        progress_text = f"{percent * 100:.1f}%"
+                    else:
+                        self.stream_progress.set(0.08 if self.stream_progress.get() < 0.08 else self.stream_progress.get())
+                        progress_text = "live"
+                    speed_text = f" · {speed / 1024 / 1024:.1f} МБ/с" if speed else ""
+                    eta_text = f" · осталось {int(eta)} с" if eta is not None else ""
+                    self.stream_status.configure(text=f"{progress_text}{speed_text}{eta_text} · получено {downloaded / 1024 / 1024:.1f} МБ")
+                elif event == "stream_status":
+                    self.stream_status.configure(text=payload)
+                elif event == "stream_done":
+                    title, path = payload
+                    self.stream_status.configure(text=f"Готово: {title} · {path}")
+                    self.stream_progress.set(1)
+                    self.stream_button.configure(state="normal")
+                    self.stop_stream_button.configure(state="disabled")
+                    self._set_video(path)
+                elif event == "stream_stopped":
+                    self.stream_status.configure(text="Загрузка остановлена; временные данные сохранены.")
+                    self.stream_progress.set(0)
+                    self.stream_button.configure(state="normal")
+                    self.stop_stream_button.configure(state="disabled")
+                elif event == "stream_error":
+                    self.stream_status.configure(text="Ошибка загрузки")
+                    self.stream_button.configure(state="normal")
+                    self.stop_stream_button.configure(state="disabled")
+                    messagebox.showerror("Ошибка загрузки", payload)
                 elif event == "error":
                     self.progress.set(0)
                     self.status.set("Ошибка")
