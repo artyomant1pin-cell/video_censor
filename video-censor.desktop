@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Video Censor
+Comment=Detect and censor profanity in video
+Exec=fish /home/future/video_censor/run.fish
+Path=/home/future/video_censor
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+StartupNotify=true

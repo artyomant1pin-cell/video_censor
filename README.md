@@ -13,9 +13,42 @@ On Debian/Ubuntu install the system packages with `sudo apt install ffmpeg pytho
 
 ## Run
 
+### Fish on Linux
+
+On Arch Linux, install the system dependencies, including pip:
+
+```fish
+sudo pacman -S ffmpeg tk python python-pip
+```
+
+Create the environment and install the Python dependencies:
+
+```fish
+cd /home/future/video_censor
+python3 -m venv .venv
+source .venv/bin/activate.fish
+python -m pip install -r requirements.txt
+```
+
+Start the application with `python app.py` or `fish run.fish`.
+
+### Niri application menu
+
+The included `video-censor.desktop` file launches the app through `run.fish`. Install it for the current user and refresh the desktop database if available:
+
+```fish
+mkdir -p ~/.local/share/applications
+cp video-censor.desktop ~/.local/share/applications/
+update-desktop-database ~/.local/share/applications 2>/dev/null
+```
+
+It will then be available to desktop launchers that read XDG application entries, such as Fuzzel or Wofi under Niri. Tk uses the system's available X11/Wayland compatibility layer.
+
+### Other platforms
+
 ```sh
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+source .venv/bin/activate  # POSIX sh/bash/zsh; Fish: source .venv/bin/activate.fish
 python -m pip install -r requirements.txt
 python app.py
 ```
