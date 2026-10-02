@@ -32,6 +32,8 @@ python -m pip install -r requirements.txt
 
 Start the application with `fish run.fish`. During analysis, recognized words are added to the results list as they arrive with exact start/end timecodes. Paste a YouTube link and press **Скачать превью** to save the thumbnail and show the video title. Use **Скачать видео** for a public YouTube/Twitch recording or live stream. Active streams continue downloading until they end or you press **Остановить**; partial data is retained for resuming. Completed renders are stored in `~/.local/share/cut-helper/history.json` and shown in the in-app history panel.
 
+The app remembers the last normal window size and position in `~/.local/share/cut-helper/settings.json`.
+
 For NVIDIA speech recognition, install the CUDA 12 libraries expected by CTranslate2, then launch through `run.fish` so their library paths are set:
 
 ```fish
@@ -60,11 +62,12 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Choose a video with the file picker or drag it into the app window. Select an output folder, censoring mode, and padding, then press **Analyze video**. Review the detected words and uncheck false positives before pressing **Render**. A custom sound file is required for Custom Sound mode. The built-in list is in `blacklist.txt`; one word or substring mask per line. You can load another list or add entries in the app.
+Choose a video with the file picker or drag it into the app window. Select an output folder, censoring mode, and padding, then press **Analyze video**. Review the detected words and uncheck false positives before pressing **Render**. A custom sound file is required for Custom Sound mode. In `blacklist.txt` or an imported list, plain words match whole tokens, `word*` matches tokens beginning with that form, and `*word*` explicitly searches inside a token. You can load another list or add entries in the app.
 
 ## Notes
 
-- Detection uses word-level timestamps and substring matching against the built-in and user-provided terms. Short roots can match innocent words; review the results before rendering.
+- Detection uses word-level timestamps and exact token matching by default. Prefix and substring matching only happen when a list entry includes an explicit `*` mask.
 - Bleep, Mute, and Custom Sound preserve the original video stream where possible. Fast-Forward speeds the flagged interval up 3x; Cut removes it. These editing modes re-encode video and audio for clean joins.
+- Rendered audio is loudness-normalized to `-16 LUFS` with a `-1.5 dBTP` peak target. Bleep/custom-sound mixing does not attenuate the source according to the number of censored intervals. This makes quiet source recordings easier to hear while keeping peaks controlled.
 - Output is MP4. The renderer tries NVENC when available and falls back to `libx264`.
 - The application does not upload media. Model files are downloaded from the model registry on first use.

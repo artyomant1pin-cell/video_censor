@@ -21,6 +21,7 @@ from engine import CensorError, Hit, detect, load_terms, probe_media, render
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path.home() / ".local" / "share" / "cut-helper"
 HISTORY_FILE = DATA_DIR / "history.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 LEGACY_HISTORY_FILE = APP_DIR / "censor_history.json"
 MODES = ["Bleep", "Mute", "Fast-Forward", "Cut", "Custom Sound"]
 
@@ -34,7 +35,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
         self.title("Cut-Helper")
-        self.geometry("980x860")
+        self.geometry(self._load_geometry() or "980x860")
         self.minsize(800, 700)
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
@@ -54,6 +55,9 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._stream_stop = threading.Event()
         self.events: queue.Queue = queue.Queue()
         self._build()
+        self._geometry_save_job = None
+        self.bind("<Configure>", self._on_configure)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         try:
             self.TkdndVersion = TkinterDnD._require(self)
             self.drop_target_register(DND_FILES)
@@ -68,15 +72,28 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(self, text="Cut-Helper", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=0, padx=22, pady=(18, 12), sticky="w")
 
-        self.tabs = ctk.CTkTabview(self)
+        self.tabs = ctk.CTkTabview(
+            self,
+            anchor="nw",
+            segmented_button_fg_color=("#e3e9ed", "#30383f"),
+            segmented_button_selected_color=("#287d58", "#287d58"),
+            segmented_button_selected_hover_color=("#226b4b", "#226b4b"),
+            segmented_button_unselected_color=("#e3e9ed", "#30383f"),
+            segmented_button_unselected_hover_color=("#d2dce2", "#414b54"),
+            text_color=("#18222a", "#f2f5f6"),
+            text_color_disabled=("#777f85", "#858d95"),
+            segmented_button_font=ctk.CTkFont(size=14, weight="bold"),
+        )
         self.tabs.grid(row=1, column=0, padx=16, pady=4, sticky="nsew")
         censor_tab = self.tabs.add("Цензура")
-        online_tab = self.tabs.add("YouTube и Twitch")
+        online_tab = self.tabs.add("Превью и загрузки")
         history_tab = self.tabs.add("История")
         for tab in (censor_tab, online_tab, history_tab):
             tab.grid_columnconfigure(0, weight=1)
         censor_tab.grid_rowconfigure(3, weight=1)
         history_tab.grid_rowconfigure(0, weight=1)
+        online_tab.grid_columnconfigure(0, weight=1)
+        online_tab.grid_columnconfigure(2, weight=1)
 
         source = ctk.CTkFrame(censor_tab, fg_color="transparent")
         source.grid(row=0, column=0, padx=4, pady=4, sticky="ew")
@@ -121,12 +138,14 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.results.grid(row=3, column=0, padx=4, pady=4, sticky="nsew")
         self.results.grid_columnconfigure(0, weight=1)
 
-        youtube = ctk.CTkFrame(online_tab)
-        youtube.grid(row=0, column=0, padx=10, pady=10, sticky="new")
+        youtube = ctk.CTkFrame(online_tab, width=900, height=250)
+        youtube.grid(row=0, column=1, padx=10, pady=10, sticky="new")
+        youtube.grid_propagate(False)
+        self.online_panel = youtube
         youtube.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(youtube, text="YouTube").grid(row=0, column=0, padx=(12, 8), pady=9)
+        ctk.CTkLabel(youtube, text="Превью").grid(row=0, column=0, padx=(12, 8), pady=9)
         ctk.CTkEntry(youtube, textvariable=self.youtube_url, placeholder_text="Вставьте ссылку на ролик").grid(row=0, column=1, padx=4, sticky="ew")
-        self.youtube_button = ctk.CTkButton(youtube, text="Скачать превью", width=140, command=self._download_youtube_thumbnail)
+        self.youtube_button = ctk.CTkButton(youtube, text="Скачать превью", width=140, fg_color="#287d58", hover_color="#226b4b", command=self._download_youtube_thumbnail)
         self.youtube_button.grid(row=0, column=2, padx=(8, 12))
         self.youtube_result_label = ctk.CTkLabel(youtube, textvariable=self.youtube_result, anchor="w", justify="left")
         self.youtube_result_label.grid(row=1, column=1, padx=4, pady=(0, 8), sticky="ew")
@@ -134,9 +153,9 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.open_thumbnail_button.grid(row=1, column=2, padx=(8, 12), pady=(0, 8))
         ctk.CTkLabel(youtube, text="Стрим / запись").grid(row=2, column=0, padx=(12, 8), pady=(2, 8))
         ctk.CTkEntry(youtube, textvariable=self.youtube_url, placeholder_text="Ссылка YouTube или Twitch").grid(row=2, column=1, padx=4, pady=(2, 8), sticky="ew")
-        self.stream_button = ctk.CTkButton(youtube, text="Скачать видео", width=140, command=self._download_stream)
+        self.stream_button = ctk.CTkButton(youtube, text="Скачать видео", width=140, fg_color="#2674a8", hover_color="#1f638f", command=self._download_stream)
         self.stream_button.grid(row=2, column=2, padx=(8, 12), pady=(2, 8))
-        self.stop_stream_button = ctk.CTkButton(youtube, text="Остановить", width=90, state="disabled", command=self._stop_stream)
+        self.stop_stream_button = ctk.CTkButton(youtube, text="Остановить", width=112, fg_color="#a33d3d", hover_color="#873131", state="disabled", command=self._stop_stream)
         self.stop_stream_button.grid(row=3, column=2, padx=(8, 12), pady=(0, 8))
         self.stream_progress = ctk.CTkProgressBar(youtube)
         self.stream_progress.grid(row=3, column=1, padx=4, pady=(0, 8), sticky="ew")
@@ -314,7 +333,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.status.set(f"Добавлен список: {Path(name).name}")
 
     def _add_word(self):
-        word = simpledialog.askstring("Добавить слово", "Слово или маска для поиска:", parent=self)
+        word = simpledialog.askstring("Добавить слово", "Точное слово, префикс* или *подстрока*:", parent=self)
         if word and word.strip():
             try:
                 with (APP_DIR / "blacklist.txt").open("a", encoding="utf-8") as file:
@@ -401,6 +420,59 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 return data if isinstance(data, list) else []
             except (OSError, json.JSONDecodeError):
                 return []
+
+    def _load_geometry(self):
+        try:
+            geometry = json.loads(SETTINGS_FILE.read_text(encoding="utf-8")).get("geometry", "")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return None
+        match = re.fullmatch(r"(\d+)x(\d+)(?:[+-]\d+){0,2}", geometry)
+        if not match:
+            return None
+        width, height = map(int, match.groups())
+        if (width >= self.winfo_screenwidth() - 16
+                and height >= self.winfo_screenheight() - 24):
+            return None
+        return geometry
+
+    def _on_configure(self, event):
+        if event.widget is not self:
+            return
+        self._resize_online_panel()
+        if self.state() != "normal" or self._is_fullscreen_geometry():
+            return
+        if self._geometry_save_job is not None:
+            self.after_cancel(self._geometry_save_job)
+        self._geometry_save_job = self.after(450, self._save_geometry)
+
+    def _resize_online_panel(self):
+        if not hasattr(self, "online_panel"):
+            return
+        available = self.tabs.winfo_width() - 56
+        width = max(680, min(1180, available))
+        self.online_panel.configure(width=width)
+
+    def _is_fullscreen_geometry(self):
+        return (self.winfo_width() >= self.winfo_screenwidth() - 16
+                and self.winfo_height() >= self.winfo_screenheight() - 24)
+
+    def _save_geometry(self):
+        self._geometry_save_job = None
+        if self._is_fullscreen_geometry():
+            return
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            temporary = SETTINGS_FILE.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"geometry": self.geometry()}, indent=2), encoding="utf-8")
+            temporary.replace(SETTINGS_FILE)
+        except OSError:
+            pass
+
+    def _on_close(self):
+        if self._geometry_save_job is not None:
+            self.after_cancel(self._geometry_save_job)
+        self._save_geometry()
+        self.destroy()
 
     def _show_history(self):
         for child in self.history_frame.winfo_children():

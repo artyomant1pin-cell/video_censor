@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -59,8 +60,33 @@ def load_terms(paths: Iterable[Path]) -> list[str]:
         for line in path.read_text(encoding="utf-8-sig").splitlines():
             term = line.split("#", 1)[0].strip().casefold()
             if term:
-                terms.add(re.sub(r"[^\w]+", "", term))
+                leading_wildcard = term.startswith("*")
+                trailing_wildcard = term.endswith("*")
+                body = _normalize_word(term.strip("*"))
+                if body:
+                    terms.add(("*" if leading_wildcard else "") + body + ("*" if trailing_wildcard else ""))
     return sorted(term for term in terms if term)
+
+
+def _normalize_word(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
+    return re.sub(r"[^\w]+", "", value)
+
+
+def _matches_profanity(word: str, terms: list[str]) -> bool:
+    for pattern in terms:
+        prefix = pattern.endswith("*")
+        suffix = pattern.startswith("*")
+        term = pattern.strip("*")
+        if prefix and suffix and term in word:
+            return True
+        if prefix and not suffix and word.startswith(term):
+            return True
+        if suffix and not prefix and word.endswith(term):
+            return True
+        if not prefix and not suffix and word == term:
+            return True
+    return False
 
 
 def detect(path: Path, terms: list[str], model_name: str = "base",
@@ -106,8 +132,8 @@ def detect(path: Path, terms: list[str], model_name: str = "base",
             for segment in segments:
                 for item in segment.words or []:
                     original = item.word.strip()
-                    normalized = re.sub(r"[^\w]+", "", original.casefold())
-                    if normalized and any(term in normalized for term in terms):
+                    normalized = _normalize_word(original)
+                    if normalized and _matches_profanity(normalized, terms):
                         hit = Hit(original, max(0.0, float(item.start)), float(item.end))
                         found.append(hit)
                         if on_hit:
@@ -167,7 +193,7 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
         conditions = "+".join(f"between(t,{start:.6f},{end:.6f})" for start, end in ranges)
         graph.append(f"[0:a]volume=0:enable='{conditions}'[muted]")
         if mode == "Mute":
-            graph.append("[muted]anull[aout]")
+            graph.append("[muted]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
         else:
             sounds: list[str] = []
             for index, (start, end) in enumerate(ranges):
@@ -179,7 +205,9 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
                     input_index = index + 1
                     graph.append(f"[{input_index}:a]atrim=duration={duration_s:.6f},asetpts=PTS-STARTPTS,volume=0.8,adelay={round(start * 1000)}|{round(start * 1000)}[s{index}]")
                 sounds.append(f"[s{index}]")
-            graph.append("[muted]" + "".join(sounds) + f"amix=inputs={len(sounds) + 1}:duration=first:dropout_transition=0[aout]")
+            graph.append("[muted]" + "".join(sounds) +
+                         f"amix=inputs={len(sounds) + 1}:duration=first:dropout_transition=0:normalize=0,"
+                         "loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
         command.extend(["-filter_complex", ";".join(graph), "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"])
     elif mode in ("Cut", "Fast-Forward"):
         boundaries: list[tuple[float, float, bool]] = []
@@ -209,7 +237,8 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
                 alabels.append(f"[{alabel}]")
         graph.append("".join(vlabels) + f"concat=n={len(vlabels)}:v=1:a=0[vout]")
         if has_audio:
-            graph.append("".join(alabels) + f"concat=n={len(alabels)}:v=0:a=1[aout]")
+            graph.append("".join(alabels) +
+                         f"concat=n={len(alabels)}:v=0:a=1,loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
         command.extend(["-filter_complex", ";".join(graph), "-map", "[vout]"])
         if has_audio:
             command.extend(["-map", "[aout]"])
