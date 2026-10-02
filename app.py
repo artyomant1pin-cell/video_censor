@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
+from tkinterdnd2 import COPY, DND_FILES, REFUSE_DROP, TkinterDnD
 
 from engine import CensorError, Hit, detect, load_terms, probe_media, render
 
@@ -19,7 +21,7 @@ def timestamp(value: float) -> str:
     return f"{int(minutes):02d}:{seconds:06.3f}"
 
 
-class CensorApp(ctk.CTk):
+class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
         self.title("Video Censor")
@@ -39,6 +41,13 @@ class CensorApp(ctk.CTk):
         self.external_lists: list[Path] = []
         self.events: queue.Queue = queue.Queue()
         self._build()
+        try:
+            self.TkdndVersion = TkinterDnD._require(self)
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self._drop_video)
+            self.drop_hint.configure(text="Можно перетащить видеофайл в окно")
+        except (RuntimeError, ctk.TclError) as exc:
+            self.status.set(f"Drag-and-drop недоступен: {exc}. Выберите видео кнопкой.")
         self.after(100, self._poll)
 
     def _build(self):
@@ -55,6 +64,8 @@ class CensorApp(ctk.CTk):
         ctk.CTkLabel(source, text="Папка результата").grid(row=1, column=0, padx=(4, 10), pady=(8, 0))
         ctk.CTkEntry(source, textvariable=self.output_dir).grid(row=1, column=1, sticky="ew", pady=(8, 0))
         ctk.CTkButton(source, text="Обзор…", width=112, command=self._choose_dir).grid(row=1, column=2, padx=(8, 0), pady=(8, 0))
+        self.drop_hint = ctk.CTkLabel(source, text="Подключение drag-and-drop…", text_color=("gray45", "gray65"), anchor="w")
+        self.drop_hint.grid(row=2, column=1, sticky="w", pady=(4, 0))
 
         settings = ctk.CTkFrame(self)
         settings.grid(row=2, column=0, padx=18, pady=10, sticky="ew")
@@ -94,10 +105,29 @@ class CensorApp(ctk.CTk):
     def _choose_video(self):
         name = filedialog.askopenfilename(title="Выберите видео", filetypes=[("Видео", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Все файлы", "*.*")])
         if name:
-            self.video.set(name)
-            self.hits = []
-            self._show_hits()
-            self.render_button.configure(state="disabled")
+            self._set_video(name)
+
+    def _drop_video(self, event):
+        try:
+            paths = self.tk.splitlist(event.data)
+        except Exception:
+            paths = [event.data]
+        if not paths:
+            return REFUSE_DROP
+        path = Path(paths[0]).expanduser()
+        supported = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
+        if not path.is_file() or path.suffix.casefold() not in supported:
+            messagebox.showerror("Неподдерживаемый файл", "Перетащите видео в формате MP4, MKV, MOV, AVI, WebM или M4V.")
+            return REFUSE_DROP
+        self._set_video(str(path))
+        return COPY
+
+    def _set_video(self, name):
+        self.video.set(name)
+        self.hits = []
+        self._show_hits()
+        self.render_button.configure(state="disabled")
+        self.status.set(f"Выбрано видео: {Path(name).name}")
 
     def _choose_dir(self):
         name = filedialog.askdirectory(title="Папка результата", initialdir=self.output_dir.get() or str(Path.home()))
@@ -140,13 +170,20 @@ class CensorApp(ctk.CTk):
             return
         self.analyze_button.configure(state="disabled")
         self.render_button.configure(state="disabled")
+        self.hits = []
+        self._show_hits()
         self.progress.set(0.08)
         self.status.set("Подготовка анализа…")
         def worker():
             try:
                 probe_media(path)
                 terms = load_terms([APP_DIR / "blacklist.txt", *self.external_lists])
-                hits = detect(path, terms, self.model.get(), lambda text: self.events.put(("status", text)))
+                hits = detect(
+                    path, terms, self.model.get(),
+                    lambda text: self.events.put(("status", text)),
+                    lambda hit: self.events.put(("hit", hit)),
+                    lambda current, total: self.events.put(("transcription_progress", (current, total))),
+                )
                 self.events.put(("analyzed", hits))
             except Exception as exc:
                 self.events.put(("error", str(exc)))
@@ -163,7 +200,7 @@ class CensorApp(ctk.CTk):
         custom = Path(self.sound.get()).expanduser() if self.sound.get() else None
         self.render_button.configure(state="disabled")
         self.analyze_button.configure(state="disabled")
-        self.progress.set(0.68)
+        self.progress.set(0.56)
         def worker():
             try:
                 render(source, destination, selected, self.mode.get(), int(self.padding.get()), custom,
@@ -180,12 +217,30 @@ class CensorApp(ctk.CTk):
         if not self.hits:
             ctk.CTkLabel(self.results, text="Результаты анализа появятся здесь.", anchor="w").grid(row=0, column=0, padx=10, pady=8, sticky="ew")
         for index, hit in enumerate(self.hits):
-            variable = ctk.BooleanVar(value=hit.enabled)
-            checkbox = ctk.CTkCheckBox(self.results, text=f"{timestamp(hit.start)}  {hit.word}  ({hit.end - hit.start:.2f} с)", variable=variable,
-                                       command=lambda i=index, v=variable: self._toggle_hit(i, v.get()))
-            checkbox.grid(row=index, column=0, padx=10, pady=4, sticky="w")
-            self.hit_checks.append(checkbox)
+            self._add_hit_row(index, hit)
         self.status.set(f"Найдено слов: {len(self.hits)}")
+
+    def _add_hit_row(self, index, hit):
+        variable = ctk.BooleanVar(value=hit.enabled)
+        checkbox = ctk.CTkCheckBox(
+            self.results,
+            text=f"{timestamp(hit.start)}  {hit.word}  ({hit.end - hit.start:.2f} с)",
+            variable=variable,
+            command=lambda i=index, v=variable: self._toggle_hit(i, v.get()),
+        )
+        checkbox.grid(row=index, column=0, padx=10, pady=4, sticky="w")
+        self.hit_checks.append(checkbox)
+
+    def _append_live_hit(self, hit):
+        if any(old.word.casefold() == hit.word.casefold() and abs(old.start - hit.start) < 0.12
+               for old in self.hits):
+            return
+        if not self.hits:
+            for child in self.results.winfo_children():
+                child.destroy()
+        self.hits.append(hit)
+        self._add_hit_row(len(self.hits) - 1, hit)
+        self.status.set(f"Распознано слов: {len(self.hits)}")
 
     def _toggle_hit(self, index, enabled):
         self.hits[index].enabled = enabled
@@ -196,14 +251,31 @@ class CensorApp(ctk.CTk):
                 event, payload = self.events.get_nowait()
                 if event == "status":
                     self.status.set(payload)
-                    if "Транскрибация" in payload:
-                        self.progress.set(0.3)
+                    if "Извлечение аудио" in payload:
+                        self.progress.set(0.15)
+                    elif "Транскрибация" in payload:
+                        self.progress.set(0.27)
+                    elif "GPU недоступна" in payload:
+                        self.progress.set(0.27)
                     elif "таймкодов" in payload:
-                        self.progress.set(0.56)
+                        self.progress.set(0.58)
                     elif "Рендеринг" in payload:
-                        self.progress.set(0.75)
+                        match = re.search(r"(\d+)%", payload)
+                        self.progress.set(0.58 + 0.41 * int(match.group(1)) / 100 if match else 0.6)
+                elif event == "hit":
+                    self._append_live_hit(payload)
+                elif event == "transcription_progress":
+                    current, total = payload
+                    fraction = min(1.0, current / total) if total else 0.0
+                    self.progress.set(0.27 + 0.3 * fraction)
+                    self.status.set(f"Транскрибация: {timestamp(current)} / {timestamp(total)} · найдено {len(self.hits)}")
                 elif event == "analyzed":
+                    disabled = [(hit.word.casefold(), hit.start) for hit in self.hits if not hit.enabled]
                     self.hits = payload
+                    for hit in self.hits:
+                        if any(word == hit.word.casefold() and abs(start - hit.start) < 0.12
+                               for word, start in disabled):
+                            hit.enabled = False
                     self._show_hits()
                     self.progress.set(1)
                     self.analyze_button.configure(state="normal")

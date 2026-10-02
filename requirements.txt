@@ -1,5 +1,4 @@
 customtkinter>=5.2.2
 faster-whisper>=1.1.0
-
-# Optional: drag-and-drop support in the file picker window.
-# tkinterdnd2>=0.4.2
+av>=11,<19
+tkinterdnd2>=0.4.2,<0.6

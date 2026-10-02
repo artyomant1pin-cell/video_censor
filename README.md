@@ -7,7 +7,7 @@ Desktop tool for detecting Russian and English profanity in a video and censorin
 - Python 3.10+
 - `ffmpeg` and `ffprobe` on `PATH`
 - Tk support for your Python installation
-- For speech recognition: install `requirements.txt`. The first run downloads the selected Whisper model. CPU uses int8; CUDA uses float16 when available.
+- Install `requirements.txt` for the GUI, drag-and-drop support, and speech recognition. The PyAV and tkinterdnd2 version limits keep compatibility with faster-whisper and the Tcl 8.6 libraries provided on current Arch systems. The first run downloads the selected Whisper model. CPU uses int8; CUDA uses float16 when available, with automatic CPU fallback if CUDA libraries are missing.
 
 On Debian/Ubuntu install the system packages with `sudo apt install ffmpeg python3-tk`. On Arch Linux use `sudo pacman -S ffmpeg tk`. On Windows, install FFmpeg and add its `bin` directory to `PATH`.
 
@@ -30,19 +30,26 @@ source .venv/bin/activate.fish
 python -m pip install -r requirements.txt
 ```
 
-Start the application with `python app.py` or `fish run.fish`.
+Start the application with `fish run.fish`. During analysis, recognized words are added to the results list as they arrive; rendering reports FFmpeg's current progress.
+
+For NVIDIA speech recognition, install the CUDA 12 libraries expected by CTranslate2, then launch through `run.fish` so their library paths are set:
+
+```fish
+python -m pip install -r requirements-nvidia.txt
+fish run.fish
+```
+
+The CUDA libraries are installed inside `.venv`; the system CUDA installation is left alone. If CUDA initialization still fails, the app reports the reason and retries on CPU.
 
 ### Niri application menu
 
-The included `video-censor.desktop` file launches the app through `run.fish`. Install it for the current user and refresh the desktop database if available:
+Install a launcher for the current user. The script finds the project directory automatically and writes the desktop entry to the XDG applications folder:
 
 ```fish
-mkdir -p ~/.local/share/applications
-cp video-censor.desktop ~/.local/share/applications/
-update-desktop-database ~/.local/share/applications 2>/dev/null
+fish install.fish
 ```
 
-It will then be available to desktop launchers that read XDG application entries, such as Fuzzel or Wofi under Niri. Tk uses the system's available X11/Wayland compatibility layer.
+The launcher will be available to desktop launchers that read XDG application entries, such as Fuzzel or Wofi under Niri. Tk uses the system's available X11/Wayland compatibility layer.
 
 ### Other platforms
 
@@ -53,7 +60,7 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Choose a video and output folder, select a censoring mode and padding, then press **Analyze video**. Review the detected words and uncheck false positives before pressing **Render**. A custom sound file is required for Custom Sound mode. The built-in list is in `blacklist.txt`; one word or substring mask per line. You can load another list or add entries in the app.
+Choose a video with the file picker or drag it into the app window. Select an output folder, censoring mode, and padding, then press **Analyze video**. Review the detected words and uncheck false positives before pressing **Render**. A custom sound file is required for Custom Sound mode. The built-in list is in `blacklist.txt`; one word or substring mask per line. You can load another list or add entries in the app.
 
 ## Notes
 

@@ -64,7 +64,9 @@ def load_terms(paths: Iterable[Path]) -> list[str]:
 
 
 def detect(path: Path, terms: list[str], model_name: str = "base",
-           progress: Callable[[str], None] | None = None) -> list[Hit]:
+           progress: Callable[[str], None] | None = None,
+           on_hit: Callable[[Hit], None] | None = None,
+           on_transcription_progress: Callable[[float, float], None] | None = None) -> list[Hit]:
     ffmpeg, _ = require_tools()
     if not terms:
         return []
@@ -86,17 +88,46 @@ def detect(path: Path, terms: list[str], model_name: str = "base",
             import ctranslate2
         except ImportError as exc:
             raise CensorError("Не установлены зависимости. Выполните: python -m pip install -r requirements.txt") from exc
-        device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
-        compute_type = "float16" if device == "cuda" else "int8"
-        model = WhisperModel(model_name, device=device, compute_type=compute_type)
-        segments, _info = model.transcribe(str(wav), language=None, word_timestamps=True, vad_filter=True)
-        hits: list[Hit] = []
-        for segment in segments:
-            for item in segment.words or []:
-                original = item.word.strip()
-                normalized = re.sub(r"[^\w]+", "", original.casefold())
-                if normalized and any(term in normalized for term in terms):
-                    hits.append(Hit(original, max(0.0, float(item.start)), float(item.end)))
+        try:
+            device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
+        except Exception:
+            device = "cpu"
+        if progress:
+            progress("Транскрибация на NVIDIA GPU (CUDA/float16)" if device == "cuda"
+                     else "Транскрибация на CPU (int8)")
+
+        def transcribe_on(target_device: str) -> list[Hit]:
+            compute_type = "float16" if target_device == "cuda" else "int8"
+            model = WhisperModel(model_name, device=target_device, compute_type=compute_type)
+            segments, info = model.transcribe(
+                str(wav), language=None, word_timestamps=True, vad_filter=True
+            )
+            found: list[Hit] = []
+            for segment in segments:
+                for item in segment.words or []:
+                    original = item.word.strip()
+                    normalized = re.sub(r"[^\w]+", "", original.casefold())
+                    if normalized and any(term in normalized for term in terms):
+                        hit = Hit(original, max(0.0, float(item.start)), float(item.end))
+                        found.append(hit)
+                        if on_hit:
+                            on_hit(hit)
+                if on_transcription_progress and info.duration:
+                    on_transcription_progress(min(float(segment.end), float(info.duration)),
+                                              float(info.duration))
+            return found
+
+        try:
+            hits = transcribe_on(device)
+        except Exception as exc:
+            if device != "cuda":
+                raise
+            if progress:
+                progress(f"GPU недоступна ({exc}). Повторяю распознавание на CPU…")
+            try:
+                hits = transcribe_on("cpu")
+            except Exception as cpu_exc:
+                raise CensorError(f"Не удалось распознать видео ни на GPU, ни на CPU: {cpu_exc}") from cpu_exc
         if progress:
             progress(f"Поиск таймкодов: найдено {len(hits)}")
         return hits
@@ -191,12 +222,40 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
     else:
         raise CensorError(f"Неизвестный режим: {mode}")
     command.extend(["-movflags", "+faststart", str(destination)])
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode and mode in ("Cut", "Fast-Forward") and nvenc_available:
+    expected_duration = duration
+    if mode == "Cut":
+        expected_duration -= sum(end - start for start, end in ranges)
+    elif mode == "Fast-Forward":
+        expected_duration -= sum((end - start) * (1 - 1 / 3) for start, end in ranges)
+    expected_duration = max(0.1, expected_duration)
+
+    def run_with_progress(args: list[str]):
+        progress_args = args[:-1] + ["-progress", "pipe:1", "-nostats", args[-1]]
+        process = subprocess.Popen(progress_args, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, bufsize=1)
+        current_seconds = 0.0
+        assert process.stdout is not None
+        for line in process.stdout:
+            key, separator, value = line.strip().partition("=")
+            if separator and key in ("out_time_us", "out_time_ms"):
+                try:
+                    current_seconds = int(value) / 1_000_000
+                except ValueError:
+                    continue
+                if progress:
+                    ratio = max(0.0, min(1.0, current_seconds / expected_duration))
+                    progress(f"Рендеринг видео: {round(ratio * 100)}%")
+        stderr = process.stderr.read() if process.stderr else ""
+        return process.wait(), stderr
+
+    result_code, stderr = run_with_progress(command)
+    if result_code and mode in ("Cut", "Fast-Forward") and nvenc_available:
         fallback = command.copy()
         encoder_index = fallback.index("h264_nvenc")
         fallback[encoder_index:encoder_index + 5] = ["libx264", "-preset", "veryfast", "-crf", "20"]
-        result = subprocess.run(fallback, capture_output=True, text=True)
-    if result.returncode:
-        details = result.stderr.strip().splitlines()[-12:]
+        if progress:
+            progress("NVENC не сработал, продолжаю рендер на CPU…")
+        result_code, stderr = run_with_progress(fallback)
+    if result_code:
+        details = stderr.strip().splitlines()[-12:]
         raise CensorError("Ошибка FFmpeg:\n" + "\n".join(details))

@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# CUDA 12 user-space libraries required by CTranslate2/faster-whisper.
+# These live in the virtual environment and do not replace system CUDA.
+nvidia-cublas-cu12>=12.4,<13
+nvidia-cuda-runtime-cu12>=12.4,<13
+nvidia-cudnn-cu12>=9,<10
