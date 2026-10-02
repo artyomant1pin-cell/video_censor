@@ -19,8 +19,8 @@ printf '%s\n' \
     '[Desktop Entry]' \
     'Version=1.0' \
     'Type=Application' \
-    'Name=Video Censor' \
-    'Comment=Detect and censor profanity in video' \
+    'Name=Cut-Helper' \
+    'Comment=Tools for streamer video editing' \
     "Exec=fish \"$escaped_app_dir/run.fish\"" \
     "Path=$app_dir" \
     'Terminal=false' \
@@ -35,4 +35,4 @@ if command -q update-desktop-database
     update-desktop-database $applications_dir 2>/dev/null
 end
 
-echo "Installed Video Censor launcher: $desktop_file"
+echo "Installed Cut-Helper launcher: $desktop_file"

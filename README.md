@@ -1,6 +1,6 @@
-# Video Censor
+# Cut-Helper
 
-Desktop tool for detecting Russian and English profanity in a video and censoring the selected word intervals. Speech recognition runs locally with `faster-whisper`.
+Desktop toolkit for streamer video editing. It detects Russian and English profanity locally with `faster-whisper`, can censor selected intervals, and downloads YouTube video thumbnails with their titles.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ source .venv/bin/activate.fish
 python -m pip install -r requirements.txt
 ```
 
-Start the application with `fish run.fish`. During analysis, recognized words are added to the results list as they arrive; rendering reports FFmpeg's current progress.
+Start the application with `fish run.fish`. During analysis, recognized words are added to the results list as they arrive with exact start/end timecodes. Paste a YouTube link and press **Скачать превью** to save the thumbnail and show the video title. The app downloads thumbnail/metadata only, not the video. Completed renders are stored in `~/.local/share/cut-helper/history.json` and shown in the in-app history panel.
 
 For NVIDIA speech recognition, install the CUDA 12 libraries expected by CTranslate2, then launch through `run.fish` so their library paths are set:
 
